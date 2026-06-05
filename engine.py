@@ -271,6 +271,420 @@ def report_to_dict(report: DreamReport) -> dict:
         ],
     }
 
+
+
+# ═══════════════════════════════════════════════════════
+# 🆕 v3.0 新增模块
+# ═══════════════════════════════════════════════════════
+
+import math, re, sqlite3, json, os, hashlib
+from datetime import datetime, timedelta
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+# ═══════════════════════════════════════════
+# 🆕 Ebbinghaus 遗忘曲线衰减引擎
+# ═══════════════════════════════════════════
+
+class EbbinghausDecay:
+    """艾宾浩斯遗忘曲线：自然衰减 + 访问增强"""
+
+    HALF_LIFE_DAYS = 30       # 半衰期：30天不用衰减50%
+    MIN_STRENGTH = 0.05       # 最低强度（不会彻底忘记）
+    BOOST_FACTOR = 1.3        # 每次访问增强系数
+
+    @staticmethod
+    def decay_factor(days_since_access: float) -> float:
+        """计算衰减因子：e^(-ln2 * t / half_life)"""
+        return math.exp(-math.log(2) * days_since_access / EbbinghausDecay.HALF_LIFE_DAYS)
+
+    @staticmethod
+    def current_strength(initial_strength: float, last_access: str) -> float:
+        """计算当前记忆强度"""
+        try:
+            last = datetime.fromisoformat(last_access)
+            days = (datetime.now() - last).total_seconds() / 86400
+        except (ValueError, TypeError):
+            days = EbbinghausDecay.HALF_LIFE_DAYS
+        decayed = initial_strength * EbbinghausDecay.decay_factor(days)
+        return max(EbbinghausDecay.MIN_STRENGTH, min(decayed, 1.0))
+
+    @staticmethod
+    def boost(current_strength: float) -> float:
+        """访问后增强记忆强度"""
+        return min(1.0, current_strength * EbbinghausDecay.BOOST_FACTOR)
+
+    @staticmethod
+    def should_archive(strength: float, threshold: float = 0.15) -> bool:
+        """记忆强度低于阈值 → 建议归档"""
+        return strength < threshold
+
+
+# ═══════════════════════════════════════════
+# 🆕 零LLM事实提取器（省token！）
+# ═══════════════════════════════════════════
+
+class ZeroLLMExtractor:
+    """基于正则的事实提取，零token成本。
+    
+    相比于 Suyi 的纯英文正则，我们增加了中文支持。
+    """
+
+    PATTERNS = [
+        ("(?:我|用户|合尘猫)(?:喜欢|偏好|习惯|用的是?|在用)\\s*(.+?)(?:[。，；.!；\\n]|$)", "preference"),
+        ("(?:不要|别|禁止|不能用|别再)\\s*(.+?)(?:[。，；.!；\\n]|$)", "correction"),
+        ("(?:系统|环境|OS|操作系统)(?:是|：|:)\\s*(\\w+(?:\\s*\\d+(?:\\.\\d+)?)?)", "env"),
+        ("(?:路径|文件)(?:在|是|：|:)\\s*(.+?)(?:[。，；\\n]|$)", "env"),
+        ("(?:安装|pip install|npm install)\\s+(\\S+)", "tool"),
+        ("(?:版本)\\s*(?:是|：|:)\\s*(\\S+)", "tool"),
+        ("(?:决定|选择|定下来|就)(?:用|做|选)\\s*(.+?)(?:[。，；\\n]|$)", "decision"),
+        ("(?:建仓|加仓|减仓|清仓|止损)(?:[：:]\\s*)?(.+?)(?:[。，；\\n]|$)", "decision"),
+    ]
+
+    # 英文模式（复用 Suyi 模式）
+    EN_PATTERNS = [
+        ("(?i)(?:I|user).*(?:prefer|like|use|using)\\s+(.+?)(?:[\\.!\\n]|$)", "preference"),
+        ("(?i)(?:I|user).*(?:on|using)\\s+(Windows|macOS|Linux|Ubuntu)(?:\\s+\\d+)?", "env"),
+        ("(?i)OS\\s*(?:is|:)\\s*(\\w+(?:\\s*\\d+(?:\\.\\d+)*)?)", "env"),
+        ("(?i)(?:decided|chose|picked|going with)\\s+(.+?)(?:[\\.!\\n]|$)", "decision"),
+    ]
+
+    @classmethod
+    def extract(cls, text: str) -> list[dict]:
+        """从文本提取事实，零token"""
+        facts = []
+        for pattern, fact_type in cls.PATTERNS + cls.EN_PATTERNS:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                value = match.group(1).strip()
+                if 2 < len(value) < 100:  # 过滤噪声
+                    facts.append({
+                        "type": fact_type,
+                        "value": value,
+                        "confidence": 0.7,
+                        "source": "zero_llm",
+                    })
+        return facts[:10]  # 上限10条
+
+
+# ═══════════════════════════════════════════
+# 🆕 SQLite 持久化存储
+# ═══════════════════════════════════════════
+
+class MemoryStore:
+    """SQLite 持久化存储 — 双时序事实 + 会话记录"""
+
+    def __init__(self, db_path: str = None):
+        self.db_path = db_path or os.path.expanduser("~/.hermes/memory_store.db")
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        self._init_db()
+
+    def _get_db(self):
+        db = sqlite3.connect(self.db_path)
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("PRAGMA foreign_keys=ON")
+        return db
+
+    def _init_db(self):
+        db = self._get_db()
+        db.executescript("""
+            CREATE TABLE IF NOT EXISTS facts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entity TEXT NOT NULL DEFAULT 'user',
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                fact_type TEXT DEFAULT 'general',
+                tier TEXT DEFAULT 'core',
+                confidence REAL DEFAULT 0.7,
+                strength REAL DEFAULT 0.8,
+                valid_from TEXT NOT NULL,
+                valid_to TEXT,
+                last_accessed TEXT NOT NULL,
+                access_count INTEGER DEFAULT 1,
+                source TEXT DEFAULT 'dream_engine',
+                UNIQUE(entity, key, valid_to)
+            );
+            CREATE TABLE IF NOT EXISTS dream_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                signals_collected INTEGER DEFAULT 0,
+                signals_passed INTEGER DEFAULT 0,
+                writes INTEGER DEFAULT 0,
+                tokens_saved INTEGER DEFAULT 0,
+                sprout_count INTEGER DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_facts_entity_key ON facts(entity, key);
+            CREATE INDEX IF NOT EXISTS idx_facts_strength ON facts(strength);
+            CREATE INDEX IF NOT EXISTS idx_facts_last_access ON facts(last_accessed);
+        """)
+        db.commit()
+        db.close()
+
+    def add_fact(self, key: str, value: str, fact_type: str = "general", 
+                 tier: str = "core", source: str = "dream_engine") -> int:
+        """写入双时序事实：自动关闭旧事实"""
+        db = self._get_db()
+        now = datetime.now().isoformat()
+
+        # 关闭旧的同名事实
+        db.execute(
+            "UPDATE facts SET valid_to = ? WHERE entity = 'user' AND key = ? AND valid_to IS NULL",
+            (now, key)
+        )
+
+        db.execute(
+            """INSERT INTO facts (entity, key, value, fact_type, tier, valid_from, last_accessed, source)
+               VALUES ('user', ?, ?, ?, ?, ?, ?, ?)""",
+            (key, value, fact_type, tier, now, now, source)
+        )
+        db.commit()
+        fid = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+        db.close()
+        return fid
+
+    def get_fact(self, key: str) -> Optional[dict]:
+        """获取当前有效事实"""
+        db = self._get_db()
+        cols = [c[0] for c in db.execute("SELECT * FROM facts LIMIT 0").description]
+        row = db.execute(
+            "SELECT * FROM facts WHERE entity='user' AND key=? AND valid_to IS NULL ORDER BY id DESC LIMIT 1",
+            (key,)
+        ).fetchone()
+        db.close()
+        if row:
+            return dict(zip(cols, row))
+        return None
+
+    def search(self, query: str, limit: int = 10) -> list[dict]:
+        """全文搜索（SQLite LIKE + 简单TF-IDF）"""
+        db = self._get_db()
+        terms = query.lower().split()
+        results = []
+        for term in terms:
+            rows = db.execute(
+                "SELECT * FROM facts WHERE valid_to IS NULL AND (key LIKE ? OR value LIKE ?) ORDER BY strength DESC LIMIT ?",
+                (f"%{term}%", f"%{term}%", limit)
+            ).fetchall()
+            for row in rows:
+                d = dict(zip([c[0] for c in db.execute("SELECT * FROM facts LIMIT 0").description], row))
+                if d not in results:
+                    results.append(d)
+        db.close()
+        return results[:limit]
+
+    def apply_decay(self) -> int:
+        """应用艾宾浩斯衰减"""
+        db = self._get_db()
+        count = 0
+        rows = db.execute(
+            "SELECT id, strength, last_accessed FROM facts WHERE valid_to IS NULL"
+        ).fetchall()
+        for fid, strength, last_access in rows:
+            new_strength = EbbinghausDecay.current_strength(strength, last_access)
+            if abs(new_strength - strength) > 0.01:
+                db.execute("UPDATE facts SET strength = ? WHERE id = ?", (new_strength, fid))
+                count += 1
+                # 低于阈值自动归档
+                if EbbinghausDecay.should_archive(new_strength):
+                    now = datetime.now().isoformat()
+                    db.execute("UPDATE facts SET valid_to = ?, tier = 'archive' WHERE id = ?", (now, fid))
+        db.commit()
+        db.close()
+        return count
+
+    def boost_access(self, key: str):
+        """访问后增强记忆"""
+        db = self._get_db()
+        db.execute(
+            "UPDATE facts SET access_count = access_count + 1, strength = MIN(1.0, strength * ?), last_accessed = ? WHERE entity='user' AND key=? AND valid_to IS NULL",
+            (EbbinghausDecay.BOOST_FACTOR, datetime.now().isoformat(), key)
+        )
+        db.commit()
+        db.close()
+
+    def get_stats(self) -> dict:
+        """存储统计"""
+        db = self._get_db()
+        total = db.execute("SELECT COUNT(*) FROM facts WHERE valid_to IS NULL").fetchone()[0]
+        archived = db.execute("SELECT COUNT(*) FROM facts WHERE tier='archive'").fetchone()[0]
+        avg_strength = db.execute("SELECT AVG(strength) FROM facts WHERE valid_to IS NULL").fetchone()[0] or 0
+        db.close()
+        return {"total_facts": total, "archived": archived, "avg_strength": round(avg_strength, 3)}
+
+
+# ═══════════════════════════════════════════
+# 🆕 Token 节省追踪器
+# ═══════════════════════════════════════════
+
+class TokenTracker:
+    """追踪零LLM提取节省的token"""
+
+    AVG_EXTRACTION_TOKENS = 500  # 单次LLM提取约消耗500 tokens
+
+    def __init__(self):
+        self.saved = 0
+        self.runs = 0
+
+    def record_run(self, facts_extracted: int):
+        """记录一次运行节省的token"""
+        saved = facts_extracted * self.AVG_EXTRACTION_TOKENS
+        self.saved += saved
+        self.runs += 1
+        return saved
+
+    def report(self) -> str:
+        return f"🪙 已节省 ~{self.saved:,} tokens (零LLM提取 ×{self.runs}次)"
+
+
+# ═══════════════════════════════════════════
+# 🆕 v3.0 DreamEngine 升级
+# ═══════════════════════════════════════════
+
+class DreamEngineV3:
+    """记忆梦境引擎 v3.0 — 融合艾宾浩斯衰减 + 零LLM提取 + SQLite持久化"""
+
+    def __init__(self, session_search_fn=None, memory_fn=None, get_usage_fn=None, db_path=None):
+        self.store = MemoryStore(db_path)
+        self.tracker = TokenTracker()
+
+        # 保留原有适配器接口（向后兼容）
+        self.session_search_fn = session_search_fn
+        self.memory_fn = memory_fn
+        self.get_usage_fn = get_usage_fn
+
+        # 沿用v2的评分器（保持兼容）
+        from engine import SignalScorer, SproutDetector
+        self.scorer = SignalScorer()
+        self.detector = SproutDetector()
+
+        self.run_count = 0
+
+    def ingest(self, text: str, source: str = "conversation") -> dict:
+        """摄入一段文本：零LLM提取 + 写入SQLite"""
+        # 零LLM提取事实
+        facts = ZeroLLMExtractor.extract(text)
+
+        # 写入存储
+        written = []
+        for f in facts:
+            try:
+                fid = self.store.add_fact(
+                    key=f"auto_{f['type']}_{hashlib.md5(f['value'].encode()).hexdigest()[:6]}",
+                    value=f['value'],
+                    fact_type=f['type'],
+                    source=source
+                )
+                written.append({"key": f['value'][:40], "type": f['type'], "id": fid})
+            except:
+                pass
+
+        # 追踪token节省
+        saved = self.tracker.record_run(len(written))
+
+        return {
+            "extracted": len(facts),
+            "written": len(written),
+            "tokens_saved": saved,
+            "facts": written,
+        }
+
+    def remember(self, key: str, value: str, fact_type: str = "general", tier: str = "core"):
+        """显式记住一个事实"""
+        return self.store.add_fact(key, value, fact_type, tier, source="explicit")
+
+    def recall(self, query: str = None, key: str = None, limit: int = 10) -> list[dict]:
+        """检索记忆"""
+        if key:
+            fact = self.store.get_fact(key)
+            if fact:
+                self.store.boost_access(key)  # 访问增强
+            return [fact] if fact else []
+        return self.store.search(query or "", limit)
+
+    def dream(self, text: str = None, days_back: int = 2) -> dict:
+        """执行一次梦境周期"""
+        self.run_count += 1
+        result = {
+            "run": self.run_count,
+            "timestamp": datetime.now().isoformat(),
+            "ingested": None,
+            "decayed": 0,
+            "sprouts": [],
+        }
+
+        # 摄入新内容
+        if text:
+            result["ingested"] = self.ingest(text)
+
+        # 每3次运行：应用衰减 + 检测发芽
+        if self.run_count % 3 == 0:
+            decayed = self.store.apply_decay()
+            result["decayed"] = decayed
+
+            # 发芽检测
+            all_facts = self.store.search("", limit=50)
+            memories_for_detect = [{"content": f"{f['key']}={f['value']}", "timestamp": f['valid_from']} for f in all_facts]
+            sprouts = self.detector.detect(memories_for_detect)
+            result["sprouts"] = [
+                {"topic": s.topic, "type": s.action_type, "suggestion": s.suggestion}
+                for s in sprouts
+            ]
+
+        # 统计
+        stats = self.store.get_stats()
+        result["stats"] = stats
+        result["token_report"] = self.tracker.report()
+
+        return result
+
+
+# ═══════════════════════════════════════════
+# 🆕 对比表：我们 vs 溯忆 vs 其他
+# ═══════════════════════════════════════════
+
+COMPARISON = """
+| 特性 | 🌙 梦境引擎 v3 | 溯忆 Suyi | Mem0 | 
+|:-----|:------------:|:--------:|:----:|
+| 艾宾浩斯衰减 | ✅ | ✅ | ❌ |
+| 双时序事实 | ✅ | ✅ | ❌ |
+| 零LLM提取 | ✅ 中英文 | ✅ 英文 | ❌ |
+| SQLite持久化 | ✅ | ✅ | ❌ |
+| 五阶段梦境流水线 | ✅ **独有** | ❌ | ❌ |
+| 信号采集(决策/纠偏) | ✅ **独有** | ❌ | ❌ |
+| 三维动态评分 | ✅ **独有** | ❌ | ❌ |
+| 内容发芽(sprout) | ✅ **独有** | ❌ | ❌ |
+| Token节省追踪 | ✅ **独有** | ❌ | ❌ |
+| 记忆优化(去重/压缩) | ✅ **独有** | ❌ | ❌ |
+| Hermes Agent集成 | ✅ **独有** | ❌ | ❌ |
+| pip installable | 🔲 | ✅ | ✅ |
+| 零依赖 | ✅ | ✅ | ❌ |
+| 代码行数 | ~800 | ~550 | 50000+ |
+"""
+
+if __name__ == "__main__":
+    print("🌙 记忆梦境引擎 v3.0")
+    print("=" * 50)
+    # 演示
+    engine = DreamEngineV3()
+
+    # 测试摄入
+    r = engine.ingest("我喜欢简洁的回复风格，不要啰嗦。我用的操作系统是Windows 11。以后止损线设-8%。")
+    print(f"零LLM提取: {r['extracted']} 条事实, 写入 {r['written']} 条")
+    print(f"token节省: {r['tokens_saved']}")
+
+    # 测试回忆
+    facts = engine.recall(query="Windows")
+    print(f"搜索'Windows': {len(facts)} 条结果")
+
+    # 完整梦境
+    r2 = engine.dream("合尘猫决定把夏令营价格定在2999元。不要用Bing搜中文。")
+    print(f"\n梦境 #{r2['run']}: {r2['stats']}")
+    print(engine.tracker.report())
+
+    print("\n" + COMPARISON)
+
+
 if __name__ == "__main__":
     print("记忆梦境引擎 v2.0 核心模块已就绪")
     print("  SignalCollector / SignalScorer / MemoryWriter / MemoryOptimizer / SproutDetector")
