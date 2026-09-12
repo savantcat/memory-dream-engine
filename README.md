@@ -1,99 +1,159 @@
-# 记忆梦境引擎 v3.0
+# 🌙 记忆梦境引擎 · Memory Dream Engine
 
-让你的 AI Agent「记住过去、优化现在、产出未来」
+### 你的 AI 聊完就忘，不是它笨 —— 是它从来不做梦。
+
+一个可插拔的「AI 睡眠系统」：**采集 → 评分 → 写入 → 优化 → 发芽**，每 3 小时自动跑一轮。
+零 LLM 成本、纯标准库、~800 行 Python、8/8 单元测试通过。
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.8%2B-green.svg)](engine.py)
+[![Python](https://img.shields.io/badge/python-3.9%2B-green.svg)](engine.py)
 [![Tests](https://img.shields.io/badge/tests-8%2F8%20passed-brightgreen.svg)](tests/)
-[![Gitee](https://img.shields.io/badge/Gitee-%E6%98%9F%E6%98%9F%20%E6%88%91-red.svg)](https://gitee.com/savantcat/memory-dream-engine)
+[![Deps](https://img.shields.io/badge/dependencies-zero-success.svg)](requirements.txt)
 
 ---
 
-## 一句话
+## 🤔 你大概率遇到过这三种情况
 
-你的 AI Agent 聊完就忘？给它装一个「做梦」系统——每 3 小时自动采集记忆、评分、清理、发芽。零 LLM 成本，即装即用。
+| 症状 | 真实原因 |
+|---|---|
+| 「我上周明确说过不要这样，你怎么又忘了？」 | 记忆只在**当次对话**里，从不沉淀 |
+| memory 越写越满，快撑爆上限，但**不敢删** | 没有衰减机制，不知道哪条该淘汰 |
+| 攒了一堆零散结论，**没人把它们变成产出** | 采集和产出之间断了一环 |
 
-## 核心能力
+梦境引擎就是补这三环的。
 
-- **五阶段流水线**：采集 → 评分 → 写入 → 优化 → 发芽。像人类的睡眠周期一样运作
-- **艾宾浩斯衰减**：30 天半衰期，高频访问自动增强，低强度自动归档
-- **零 LLM 事实提取**：中英文正则匹配，零 token 成本提取关键信息
-- **SQLite 持久化**：双时序事实管理，完整审计追踪
-- **Token 节省追踪**：每次运行量化节省的 token 消耗
-
-## 工作原理
+## 🧠 它怎么工作 —— 像人一样睡觉
 
 ```
-用户交互 (决策/纠偏/工具/灵感)
-    ↓
-SignalCollector 采集信号 (每180分钟)
-    ↓
-SignalScorer 三维评分 (≥70分写入，≥90分替换)
-    ↓
-MemoryWriter 写入长期记忆 (声明式，≤80字/条)
-    ↓
-MemoryOptimizer 深度清理 (每3次触发，去重/过期/压缩)
-    ↓
-SproutDetector 内容发芽 (3条→星球帖，5条→公众号)
+        ┌─ 浅睡 ── SignalCollector   采集四维信号（决策 / 纠偏 / 工具 / 灵感）
+        │
+一轮 ───┼─ 深睡 ── SignalScorer      三维动态评分（按信号类型自适应调权）
+(180min)│           MemoryWriter      去重 + 合并 + 替换，声明式写入
+        │
+        └─ REM ── SproutDetector    3 条 → 星球帖   /   5 条 → 公众号文章
+                          ▲
+                    MemoryOptimizer  每 3 轮深度清理（去重 / 过期 / 压缩）
 ```
 
-## 快速开始
+## ⚡ 四个「别人没有」的点
 
-```bash
-# 1. 安装
-pip install -r requirements.txt
+| 能力 | 说明 |
+|---|---|
+| **零 LLM 事实提取** | 纯正则，中英文通吃，提取一万条也不花一分钱 token |
+| **艾宾浩斯衰减** | 30 天半衰期，高频访问自动增强，低强度自动归档 —— 记忆会自己「瘦身」 |
+| **三维动态评分** | 决策信号看持久度、纠偏信号看纠偏度、工具信号看复用度，不是一把尺子量到底 |
+| **内容发芽** | 同一批记忆攒够了，自动提示「这批可以出一篇公众号了」 |
 
-# 2. 配置 (编辑 .env)
-# SESSION_SEARCH_FN=...
-# MEMORY_FN=...
+## 🆚 和溯忆(Suyi)比
 
-# 3. 运行引擎
-python engine.py ingest
-python engine.py dream
-
-# 4. 设置 Cron (每180分钟)
-# 详见 部署指南.md
-```
-
-完整安装步骤和使用说明请查看 [部署指南.md](部署指南.md)。
-
-## Hermes Agent 集成
-
-本引擎专为 Hermes Agent 设计，也适配任何支持 `session_search` 和 `memory` 工具的系统。
-
-Hermes 用户可以直接安装 Skill 文件：
-1. 下载 [SKILL.md](SKILL.md) 到 `~/.hermes/skills/memory-dream-engine/`
-2. 添加 Cron 配置（每180分钟运行）
-3. 首次交互式运行后执行阶段3+4的memory写入
-
-## 与溯忆(Suyi)对比
+溯忆是**被动存储**，梦境引擎是**主动生长**：
 
 | 特性 | 梦境引擎 | 溯忆 |
-|------|---------|------|
+|---|:---:|:---:|
 | 艾宾浩斯衰减 | ✅ | ✅ |
-| 零LLM提取 | ✅ 中英文 | ✅ 英文 |
-| 五阶段流水线 | ✅ 独有 | ❌ |
-| 信号采集 | ✅ 独有 | ❌ |
-| 内容发芽 | ✅ 独有 | ❌ |
-| Token追踪 | ✅ 独有 | ❌ |
+| 零 LLM 提取 | ✅ 中英文 | ⚠️ 仅英文 |
+| 五阶段流水线 | ✅ | ❌ |
+| 四维信号采集 | ✅ | ❌ |
+| 三维动态评分 | ✅ | ❌ |
+| 内容发芽 | ✅ | ❌ |
+| Token 节省追踪 | ✅ | ❌ |
+| 三方依赖 | **零** | 需向量库 |
 
-## 项目结构
+## 🚀 60 秒跑起来
+
+```bash
+git clone https://gitee.com/savantcat/memory-dream-engine.git
+cd memory-dream-engine
+
+# 依赖为零；只有跑测试才需要 pytest
+python -m pip install -r requirements.txt
+
+# 看演示（用内置 mock 适配器，不需要接任何框架）
+python cli.py
+```
+
+想看核心能力，直接跑引擎自带的 v3 演示：
+
+```bash
+python engine.py
+```
+
+## 🔌 接入你自己的 Agent
+
+引擎**不绑定任何框架**，只需实现三个适配器函数：
+
+```python
+from engine import DreamEngine
+
+def my_session_search(query, limit, sort):
+    """换成你框架的搜索接口"""
+    return [{"content": "...", "role": "user"}]
+
+def my_memory(action, target, content, old_text=None):
+    """换成你框架的记忆写入接口"""
+    return {"status": "ok"}
+
+def my_get_usage():
+    """返回 (已用字符数, 总字符数)"""
+    return (1500, 2200)
+
+engine = DreamEngine(
+    session_search_fn=my_session_search,
+    memory_fn=my_memory,
+    get_usage_fn=my_get_usage,
+)
+
+report = engine.dream(days_back=2, existing_memories=[...])
+print(report.summary())
+```
+
+> ⚠️ **文档澄清**：早期版本的 README 里出现过「编辑 `.env` 配置 `SESSION_SEARCH_FN` / `MEMORY_FN`」的说明，
+> **那是错的 —— 引擎从不读取任何环境变量**。接入方式只有上面这一种：传 Python 函数。
+
+## ⏰ 定时运行（Hermes Agent）
+
+```yaml
+schedule: every 180m
+skills: ["memory-dream-engine"]
+prompt: 执行记忆梦境引擎五阶段流程。无新发现输出 [SILENT]。
+```
+
+## ⚠️ 必读：Cron 环境写不了 Memory（最大的运维坑）
+
+多数 Agent 框架的 cron 子进程**没有 memory 工具权限**，会导致阶段 3（写入）和阶段 4（优化）**静默失败** ——
+引擎照常采集和评分，但 ≥70 分的条目会持续积压。
+
+**症状**：报告反复出现「阶段3：写入 — 受阻」，同一批高分记忆连着几轮都没写进去。
+
+**做法**：每跑 3 轮 cron，安排一次**交互式会话**手动补写阶段 3+4；memory 占用到 95% 时立即执行清理。
+
+## 📁 项目结构
 
 ```
-engine.py       ~800行，核心引擎
-cli.py          命令行入口 + 适配器示例
-SKILL.md        Hermes Agent 集成指南
-部署指南.md     两种部署方式 + FAQ
-tests/          8个单元测试
+engine.py                  ~800 行核心引擎（五阶段 + 衰减 + 零LLM提取 + SQLite）
+cli.py                     命令行入口 + 三个适配器示例
+nightbrain_consolidate.py  可选：夜间知识库巩固（扫描新知/标记陈旧/更新索引）
+SKILL.md                   Hermes Agent 集成指南
+部署指南.md                 两种部署方式 + FAQ
+tests/                     8 个单元测试（pytest）
 ```
 
-## 开源许可
+## 🧪 测试
 
-MIT License — 自由使用、修改、分发。
+```bash
+python -m pip install pytest
+python -m pytest tests/ -q      # 8 passed
+```
 
-## 作者
+> 测试为 pytest 风格（裸 assert + `setup` 方法），**不兼容 `unittest discover`**，请用 pytest 运行。
 
-合尘猫 x 小甜甜 | 2026年6月
+## 📄 License
+
+MIT — 自由使用、修改、分发。
+
+## 👤 作者
+
+合尘猫 × 小甜甜（AI 分身） · 2026
 
 ---
 

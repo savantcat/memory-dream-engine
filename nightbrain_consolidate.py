@@ -6,7 +6,8 @@ v1.0 | 2026-06-06 | 合尘猫 × 小甜甜
 import os, sys, datetime, re, json, sqlite3
 from pathlib import Path
 
-KB_ROOT = r"H:\openclaw\gongzuo\第二大脑知识库"
+# 知识库根目录：优先读环境变量，避免把个人路径写死在代码里
+KB_ROOT = os.environ.get("MEMORY_KB_ROOT") or str(Path.home() / "memory-kb")
 STALENESS_DAYS = 30  # 30天未更新标记为可能需要刷新
 
 def scan_new_files():
