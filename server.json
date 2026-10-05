@@ -1,0 +1,12 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "cn.savantcat/memory-dream-engine",
+  "title": "记忆梦境引擎 · AI 的睡眠系统",
+  "description": "零 LLM 事实提取 + 三维信号评分 + 艾宾浩斯衰减 + 五阶段梦境流水线与内容发芽检测，纯计算零依赖",
+  "version": "1.0.0",
+  "websiteUrl": "https://github.com/savantcat/memory-dream-engine",
+  "repository": {
+    "url": "https://github.com/savantcat/memory-dream-engine",
+    "source": "github"
+  }
+}

@@ -110,6 +110,35 @@ print(report.summary())
 > ⚠️ **文档澄清**：早期版本的 README 里出现过「编辑 `.env` 配置 `SESSION_SEARCH_FN` / `MEMORY_FN`」的说明，
 > **那是错的 —— 引擎从不读取任何环境变量**。接入方式只有上面这一种：传 Python 函数。
 
+## 🔌 作为 MCP 服务调用
+
+`server.py` 把引擎包成标准 **MCP server** —— 别人的 Agent 可以直接调这几个工具，不必接适配器、不必读源码。
+
+```bash
+pip install "mcp>=2.1"
+
+python server.py                                # 本地 stdio（Claude Desktop / Cursor / 任意 MCP 客户端）
+python server.py --transport http --port 8770   # 远程 streamable-http
+python server.py --selftest                     # 不走协议，直接遍历打全部工具
+```
+
+| 工具 | 作用 |
+|:---|:---|
+| `extract_facts` | 零 LLM 事实提取（纯正则，中英文通吃） |
+| `score_signal` | 三维动态评分 + 该不该写进长期记忆的结论 |
+| `decay_report` | 艾宾浩斯衰减：当前强度 / 访问增强 / 归档判定 / 完整曲线 |
+| `simulate_dream` | 用一段文本跑完整五阶段梦境周期，返回报告（临时库） |
+| `list_signal_types` | 四维信号定义、权重与打分关键词 |
+| `engine_info` | 能力概览、与同类方案的取舍对比、服务边界 |
+
+客户端配置（stdio）：
+
+```json
+{ "mcpServers": { "memory-dream-engine": { "command": "python", "args": ["server.py"] } } }
+```
+
+服务端为**纯计算、纯读**：6 个工具的四个 annotation hint 全部声明（`readOnlyHint=true` / `destructiveHint=false` / `idempotentHint=true` / `openWorldHint=false`），不需要 API Key，也**不保存调用方的任何数据** —— `simulate_dream` 在临时库跑完即销毁。
+
 ## ⏰ 定时运行（Hermes Agent）
 
 ```yaml
@@ -131,6 +160,8 @@ prompt: 执行记忆梦境引擎五阶段流程。无新发现输出 [SILENT]。
 
 ```
 engine.py                  ~800 行核心引擎（五阶段 + 衰减 + 零LLM提取 + SQLite）
+server.py                  MCP 服务端（6 个工具，双通道 stdio / streamable-http）
+server.json                MCP 元数据（官方 Registry 格式）
 cli.py                     命令行入口 + 三个适配器示例
 nightbrain_consolidate.py  可选：夜间知识库巩固（扫描新知/标记陈旧/更新索引）
 SKILL.md                   Hermes Agent 集成指南

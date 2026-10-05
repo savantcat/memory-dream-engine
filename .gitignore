@@ -25,3 +25,4 @@ Thumbs.db
 # Project specific
 dream_report.json
 *.log
+_srv.log

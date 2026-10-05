@@ -1,0 +1,67 @@
+name: CI
+
+# 每次 push 都真跑一遍工具自检（不只验证起得来，而是每个工具都打一次），
+# 顺带做语法检查与密钥泄露扫描。
+# 前置：仓库里的 `python server.py --selftest` 必须能离线跑通。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: 语法检查 + 工具自检
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 语法检查
+        run: python -m compileall -q .
+
+      - name: 确认没有密钥被提交
+        run: |
+          if git ls-files | grep -E '^\.env$|credentials|secret'; then
+            echo "::error::仓库中不应包含凭证文件"; exit 1
+          fi
+          echo "OK：未发现凭证文件"
+
+      - name: 工具自检（真打每个工具）
+        run: python server.py --selftest
+
+  tests:
+    name: 单元测试
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+
+      - name: 跑单元测试
+        run: python -m pytest tests/ -q
