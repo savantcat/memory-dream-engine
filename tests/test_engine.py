@@ -8,7 +8,7 @@ from engine import Signal, ScoredSignal, SignalScorer, DreamEngine, DreamReport,
 class TestSignalScorer:
     """阶段2：评分器测试"""
 
-    def setup(self):
+    def setup_method(self):
         self.scorer = SignalScorer()
 
     def test_decision_signal_scores_high(self):
@@ -47,7 +47,7 @@ class TestSignalScorer:
 class TestDreamEngine:
     """完整流水线测试"""
 
-    def setup(self):
+    def setup_method(self):
         self.memories = []
         def mock_search(query, limit, sort):
             return [

@@ -176,7 +176,8 @@ python -m pip install pytest
 python -m pytest tests/ -q      # 8 passed
 ```
 
-> 测试为 pytest 风格（裸 assert + `setup` 方法），**不兼容 `unittest discover`**，请用 pytest 运行。
+> 测试为 pytest 风格（裸 assert + `setup_method` 夹具），**不兼容 `unittest discover`**，请用 pytest 运行。
+> 夹具名必须是 `setup_method` —— pytest 8 已移除旧的 `setup` 约定，写成 `setup` 在 CI 上会集体报 `AttributeError`（本地老版本 pytest 却照过，是个只在 CI 才暴露的坑）。
 
 ## 📄 License
 
