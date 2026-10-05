@@ -10,6 +10,8 @@
 [![Tests](https://img.shields.io/badge/tests-8%2F8%20passed-brightgreen.svg)](tests/)
 [![Deps](https://img.shields.io/badge/dependencies-zero-success.svg)](requirements.txt)
 
+[![M8ven Verified](https://m8ven.ai/badge/mcp/savantcat/memory-dream-engine)](https://m8ven.ai/mcp/savantcat/memory-dream-engine?s=readme)
+
 ---
 
 ## 🤔 你大概率遇到过这三种情况
